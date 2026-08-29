@@ -321,10 +321,28 @@ function resetOutputs() {
   filmstrip.classList.remove('show');
 }
 
+// Builds a size-capped JPEG from the full-resolution image, specifically
+// for the network payload — keeps currentImage itself at full quality for
+// on-device cropping. This prevents hitting the backend's request size limit.
+function toUploadBase64(img, maxDim, quality) {
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const scale = Math.min(1, maxDim / Math.max(w, h));
+  const cw = Math.max(1, Math.round(w * scale));
+  const ch = Math.max(1, Math.round(h * scale));
+  const c = document.createElement('canvas');
+  c.width = cw; c.height = ch;
+  const cctx = c.getContext('2d');
+  cctx.drawImage(img, 0, 0, cw, ch);
+  const dataUrl = c.toDataURL('image/jpeg', quality);
+  return { base64: dataUrl.split(',')[1], mime: 'image/jpeg' };
+}
+
 function useAsImage(img, base64, mimeType) {
   currentImage = img;
-  currentBase64 = base64;
-  currentMime = mimeType;
+  const upload = toUploadBase64(img, 1600, 0.82);
+  currentBase64 = upload.base64;
+  currentMime = upload.mime;
   mode = 'image';
   drawStage();
   updateAnalyzeState();
