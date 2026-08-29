@@ -1,0 +1,786 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Vantage — pano composition assistant</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#121212;
+    --surface:#1b1b1a;
+    --surface-2:#232322;
+    --line: rgba(255,255,255,0.14);
+    --line-soft: rgba(255,255,255,0.07);
+    --text:#f5f3ee;
+    --text-dim:#a39d92;
+    --text-faint:#6f6a61;
+    --amber:#e8a23d;
+    --amber-dim: rgba(232,162,61,0.16);
+  }
+  *{box-sizing:border-box;}
+  html,body{margin:0;padding:0;}
+  body{
+    background:var(--bg);
+    color:var(--text);
+    font-family:'Inter',sans-serif;
+    min-height:100vh;
+    -webkit-font-smoothing:antialiased;
+    padding-bottom:60px;
+  }
+  .wrap{max-width:520px;margin:0 auto;padding:0 20px;}
+  header{
+    padding:28px 20px 20px;
+    border-bottom:1px solid var(--line-soft);
+    position:sticky;top:0;
+    background:rgba(18,18,18,0.92);
+    backdrop-filter:blur(6px);
+    z-index:10;
+  }
+  header .row{max-width:520px;margin:0 auto;display:flex;align-items:baseline;gap:10px;}
+  h1{
+    font-family:'Space Grotesk',sans-serif;
+    font-weight:700;
+    font-size:22px;
+    letter-spacing:-0.01em;
+    margin:0;
+  }
+  .tag{
+    font-size:11px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--amber);
+    font-weight:500;
+  }
+  main{padding-top:24px;}
+
+  .stage{
+    position:relative;
+    width:100%;
+    aspect-ratio:4/3;
+    background:var(--surface);
+    border:1px solid var(--line);
+    border-radius:2px;
+    overflow:hidden;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .stage canvas{width:100%;height:100%;object-fit:contain;display:block;}
+  .stage-empty{
+    text-align:center;
+    color:var(--text-faint);
+    font-size:13px;
+    padding:0 30px;
+    line-height:1.6;
+  }
+  .stage-empty svg{opacity:0.5;margin-bottom:10px;}
+  .corner{position:absolute;width:18px;height:18px;border-color:var(--line);opacity:0.9;}
+  .corner.tl{top:8px;left:8px;border-top:1.5px solid;border-left:1.5px solid;}
+  .corner.tr{top:8px;right:8px;border-top:1.5px solid;border-right:1.5px solid;}
+  .corner.bl{bottom:8px;left:8px;border-bottom:1.5px solid;border-left:1.5px solid;}
+  .corner.br{bottom:8px;right:8px;border-bottom:1.5px solid;border-right:1.5px solid;}
+
+  .controls{display:flex;gap:10px;margin-top:16px;}
+  .controls-row{display:flex;gap:10px;margin-top:16px;}
+  button{
+    font-family:'Inter',sans-serif;
+    font-size:14px;
+    font-weight:500;
+    border-radius:2px;
+    padding:13px 16px;
+    border:1px solid var(--line);
+    background:transparent;
+    color:var(--text);
+    cursor:pointer;
+    flex:1;
+    transition:background 0.15s, opacity 0.15s;
+  }
+  button:hover{background:var(--surface-2);}
+  button:active{opacity:0.7;}
+  button:disabled{opacity:0.35;cursor:not-allowed;}
+  button.primary{
+    background:var(--amber);
+    border-color:var(--amber);
+    color:#1a1204;
+  }
+  button.primary:hover{background:#f0ac4c;}
+  button.ghost{border-color:var(--line-soft);color:var(--text-dim);flex:none;padding:13px 18px;}
+
+  #photo-input, #record-input, #library-input{display:none;}
+
+  .status{
+    display:none;
+    align-items:center;
+    gap:10px;
+    margin-top:16px;
+    font-size:13px;
+    color:var(--text-dim);
+  }
+  .status.show{display:flex;}
+  .spinner{
+    width:14px;height:14px;
+    border-radius:50%;
+    border:1.5px solid var(--line);
+    border-top-color:var(--amber);
+    animation:spin 0.8s linear infinite;
+    flex-shrink:0;
+  }
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  .error{
+    display:none;
+    margin-top:16px;
+    padding:12px 14px;
+    border:1px solid rgba(224,90,60,0.4);
+    background:rgba(224,90,60,0.08);
+    color:#e88a75;
+    font-size:13px;
+    border-radius:2px;
+    line-height:1.5;
+  }
+  .error.show{display:block;}
+
+  .results{margin-top:36px;display:none;}
+  .results.show{display:block;}
+  .results-head{
+    display:flex;
+    align-items:center;
+    gap:10px;
+    margin-bottom:16px;
+  }
+  .results-head .line{flex:1;height:1px;background:var(--line-soft);}
+  .results-head span{
+    font-size:11px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--text-faint);
+  }
+
+  .snippet-card{
+    border:1px solid var(--line);
+    border-radius:2px;
+    background:var(--surface);
+    margin-bottom:14px;
+    overflow:hidden;
+  }
+  .snippet-img{width:100%;display:block;background:var(--surface-2);}
+  .snippet-body{padding:14px 16px 16px;}
+  .snippet-num{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:12px;
+    color:var(--amber);
+    font-weight:700;
+    letter-spacing:0.04em;
+  }
+  .snippet-title{
+    font-family:'Space Grotesk',sans-serif;
+    font-size:16px;
+    font-weight:500;
+    margin:2px 0 6px;
+  }
+  .snippet-reason{
+    font-size:13px;
+    color:var(--text-dim);
+    line-height:1.55;
+    margin:0 0 14px;
+  }
+  .snippet-actions{display:flex;gap:8px;}
+  .snippet-actions button{padding:9px 14px;font-size:13px;flex:none;}
+
+  .foot-note{
+    margin-top:28px;
+    padding-top:18px;
+    border-top:1px solid var(--line-soft);
+    font-size:12px;
+    color:var(--text-faint);
+    line-height:1.6;
+  }
+  .foot-note b{color:var(--text-dim);font-weight:500;}
+
+  .filmstrip{
+    display:none;
+    gap:6px;
+    overflow-x:auto;
+    margin-top:10px;
+    padding-bottom:4px;
+  }
+  .filmstrip.show{display:flex;}
+  .filmstrip canvas{
+    height:64px;
+    width:auto;
+    border-radius:2px;
+    border:1px solid var(--line-soft);
+    flex-shrink:0;
+  }
+  .filmstrip canvas.picked{border-color:var(--amber);border-width:2px;}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="row">
+    <h1>Vantage</h1>
+    <span class="tag">prototype</span>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <div class="stage" id="stage">
+    <div class="stage-empty" id="stage-empty">
+      <svg width="34" height="34" viewBox="0 0 34 34" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="8" width="32" height="22" rx="1" stroke="#6f6a61" stroke-width="1.2"/>
+        <circle cx="17" cy="19" r="7" stroke="#6f6a61" stroke-width="1.2"/>
+        <path d="M11 8L13.5 4H20.5L23 8" stroke="#6f6a61" stroke-width="1.2"/>
+      </svg>
+      <div>Take a photo, record a slow pan,<br>or choose a photo or video from your library.</div>
+    </div>
+    <canvas id="canvas" style="display:none;"></canvas>
+    <div class="corner tl"></div><div class="corner tr"></div>
+    <div class="corner bl"></div><div class="corner br"></div>
+  </div>
+
+  <div class="filmstrip" id="filmstrip"></div>
+
+  <input type="file" id="photo-input" accept="image/*" capture="environment">
+  <input type="file" id="record-input" accept="video/*" capture="environment">
+  <input type="file" id="library-input" accept="image/*,video/*">
+
+  <div class="controls-row">
+    <button id="btn-photo">Take photo</button>
+    <button id="btn-record">Video pano</button>
+  </div>
+  <div class="controls">
+    <button id="btn-library" class="ghost">Library</button>
+    <button id="btn-analyze" class="primary" disabled>Analyze scene</button>
+  </div>
+
+  <div class="status" id="status">
+    <div class="spinner"></div>
+    <span id="status-text">Reading the scene…</span>
+  </div>
+
+  <div class="error" id="error"></div>
+
+  <div class="results" id="results">
+    <div class="results-head"><span>Suggested snippets</span><div class="line"></div></div>
+    <div id="results-list"></div>
+  </div>
+
+  <div class="foot-note">
+    <b>About this prototype.</b> Vantage analyzes your photo through a private backend — no API key to set up, nothing to paste in. Take a photo, record a slow pan of a scene, or choose an existing photo/video from your library. Add this page to your home screen (Share → Add to Home Screen) for quick access. This is a small private beta, not a public App Store app.
+  </div>
+
+</main>
+
+<script>
+const photoInput = document.getElementById('photo-input');
+const recordInput = document.getElementById('record-input');
+const libraryInput = document.getElementById('library-input');
+const btnPhoto = document.getElementById('btn-photo');
+const btnRecord = document.getElementById('btn-record');
+const btnLibrary = document.getElementById('btn-library');
+const btnAnalyze = document.getElementById('btn-analyze');
+const stage = document.getElementById('stage');
+const stageEmpty = document.getElementById('stage-empty');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const filmstrip = document.getElementById('filmstrip');
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('status-text');
+const errorEl = document.getElementById('error');
+const resultsEl = document.getElementById('results');
+const resultsList = document.getElementById('results-list');
+
+let mode = null; // 'image' | 'video'
+let currentImage = null;      // single Image, image mode
+let currentBase64 = null;
+let currentMime = 'image/jpeg';
+let frames = [];              // video mode: [{img, canvas, base64, mime}]
+
+function updateAnalyzeState() {
+  btnAnalyze.disabled = !currentImage;
+}
+
+btnPhoto.addEventListener('click', () => photoInput.click());
+btnRecord.addEventListener('click', () => recordInput.click());
+btnLibrary.addEventListener('click', () => libraryInput.click());
+
+photoInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+recordInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+libraryInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+function resetOutputs() {
+  errorEl.classList.remove('show');
+  resultsEl.classList.remove('show');
+  resultsList.innerHTML = '';
+  filmstrip.innerHTML = '';
+  filmstrip.classList.remove('show');
+}
+
+function useAsImage(img, base64, mimeType) {
+  currentImage = img;
+  currentBase64 = base64;
+  currentMime = mimeType;
+  mode = 'image';
+  drawStage();
+  updateAnalyzeState();
+}
+
+function handleFile(file) {
+  if (!file) return;
+  resetOutputs();
+  currentImage = null;
+  frames = [];
+
+  if (file.type.startsWith('video/')) {
+    statusEl.classList.add('show');
+    statusText.textContent = 'Loading your video…';
+    extractFrames(file, 8, (i, total) => {
+      statusText.textContent = 'Sampling frame ' + i + ' of ' + total + '…';
+    }).then(() => {
+      statusText.textContent = 'Combining frames…';
+      const combined = buildComposite(frames);
+      const img = new Image();
+      img.onload = () => {
+        statusEl.classList.remove('show');
+        useAsImage(img, combined.base64, 'image/jpeg');
+      };
+      img.src = combined.dataUrl;
+    }).catch(err => {
+      statusEl.classList.remove('show');
+      errorEl.textContent = "Couldn't read that video. " + (err.message || 'Try recording a shorter clip.');
+      errorEl.classList.add('show');
+    });
+  } else {
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const dataUrl = ev.target.result;
+      const base64 = dataUrl.split(',')[1];
+      const mimeType = file.type || 'image/jpeg';
+      const img = new Image();
+      img.onload = () => useAsImage(img, base64, mimeType);
+      img.src = dataUrl;
+    };
+    reader.readAsDataURL(file);
+  }
+}
+
+function renderFilmstrip(highlightRange) {
+  filmstrip.innerHTML = '';
+  filmstrip.classList.add('show');
+  stageEmpty.style.display = 'none';
+  canvas.style.display = 'none';
+  frames.forEach((f, i) => {
+    const c = document.createElement('canvas');
+    c.width = f.width; c.height = f.height;
+    const cx = c.getContext('2d');
+    cx.drawImage(f.img, 0, 0);
+    if (highlightRange && i >= highlightRange[0] && i <= highlightRange[1]) {
+      c.classList.add('picked');
+    }
+    filmstrip.appendChild(c);
+  });
+}
+
+function buildComposite(frameList) {
+  // Naive side-by-side concatenation — frames share identical dimensions
+  // since they all come from the same video source.
+  const fw = frameList[0].width, fh = frameList[0].height;
+  const combinedCanvas = document.createElement('canvas');
+  combinedCanvas.width = fw * frameList.length;
+  combinedCanvas.height = fh;
+  const cctx = combinedCanvas.getContext('2d');
+  frameList.forEach((f, i) => {
+    cctx.drawImage(f.img, i * fw, 0, fw, fh);
+  });
+  const dataUrl = combinedCanvas.toDataURL('image/jpeg', 0.85);
+  return { dataUrl, base64: dataUrl.split(',')[1] };
+}
+
+// Concatenates a small range of already-loaded frames locally, purely for
+// cropping/rendering a result — never sent over the network.
+function concatFrameRange(frameList, startIdx, endIdx) {
+  const s = Math.max(0, Math.min(startIdx, endIdx));
+  const e = Math.min(frameList.length - 1, Math.max(startIdx, endIdx));
+  const slice = frameList.slice(s, e + 1);
+  const fw = slice[0].width, fh = slice[0].height;
+  const c = document.createElement('canvas');
+  c.width = fw * slice.length;
+  c.height = fh;
+  const cctx = c.getContext('2d');
+  slice.forEach((f, i) => cctx.drawImage(f.img, i * fw, 0, fw, fh));
+  return { canvas: c, width: c.width, height: c.height };
+}
+
+function extractFrames(file, count, onProgress) {
+  return new Promise((resolve, reject) => {
+    const video = document.createElement('video');
+    video.preload = 'auto';
+    video.muted = true;
+    video.playsInline = true;
+    const url = URL.createObjectURL(file);
+    video.src = url;
+
+    const overallTimeout = setTimeout(() => {
+      URL.revokeObjectURL(url);
+      reject(new Error('Timed out reading the video. Try a shorter clip (under 10 seconds).'));
+    }, 25000);
+
+    video.onloadedmetadata = async () => {
+      let duration = video.duration;
+      // iOS Safari sometimes reports Infinity until a seek forces duration to resolve
+      if (!duration || !isFinite(duration)) {
+        try {
+          await seekTo(video, 1e7, 6000);
+          duration = video.duration;
+        } catch (e) {}
+      }
+      if (!duration || !isFinite(duration)) {
+        clearTimeout(overallTimeout);
+        reject(new Error('Could not read video length.'));
+        return;
+      }
+
+      // Prime the decoder — a brief muted play/pause fixes blank-frame seeks on iOS
+      try {
+        await video.play();
+        video.pause();
+        video.currentTime = 0;
+      } catch (e) {}
+
+      const margin = Math.min(duration * 0.04, 0.5);
+      const usable = Math.max(duration - margin * 2, 0.01);
+      const times = [];
+      for (let i = 0; i < count; i++) {
+        times.push(margin + (usable * i) / Math.max(count - 1, 1));
+      }
+      try {
+        for (let i = 0; i < times.length; i++) {
+          if (onProgress) onProgress(i + 1, times.length);
+          try {
+            await seekTo(video, times[i], 6000);
+          } catch (e) {
+            continue; // skip a frame that won't seek rather than hanging forever
+          }
+          const w = video.videoWidth, h = video.videoHeight;
+          if (!w || !h) continue;
+          const maxDim = 640;
+          const scale = Math.min(1, maxDim / Math.max(w, h));
+          const fc = document.createElement('canvas');
+          fc.width = Math.round(w * scale);
+          fc.height = Math.round(h * scale);
+          const fctx = fc.getContext('2d');
+          fctx.drawImage(video, 0, 0, fc.width, fc.height);
+          const dataUrl = fc.toDataURL('image/jpeg', 0.85);
+          const img = new Image();
+          await new Promise(res => { img.onload = res; img.src = dataUrl; });
+          frames.push({
+            img,
+            width: fc.width,
+            height: fc.height,
+            base64: dataUrl.split(',')[1],
+            mime: 'image/jpeg'
+          });
+        }
+        clearTimeout(overallTimeout);
+        URL.revokeObjectURL(url);
+        if (!frames.length) { reject(new Error('Could not extract any frames from that video.')); return; }
+        resolve();
+      } catch (err) {
+        clearTimeout(overallTimeout);
+        URL.revokeObjectURL(url);
+        reject(err);
+      }
+    };
+    video.onerror = () => {
+      clearTimeout(overallTimeout);
+      reject(new Error('This video format could not be read.'));
+    };
+  });
+}
+
+function seekTo(video, t, timeoutMs) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      video.removeEventListener('seeked', onSeeked);
+      reject(new Error('Seek timed out'));
+    }, timeoutMs || 6000);
+    function onSeeked() {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      video.removeEventListener('seeked', onSeeked);
+      resolve();
+    }
+    video.addEventListener('seeked', onSeeked);
+    try {
+      video.currentTime = Math.min(t, video.duration && isFinite(video.duration) ? video.duration - 0.05 : t);
+    } catch (e) {
+      clearTimeout(timer);
+      done = true;
+      reject(e);
+    }
+  });
+}
+
+function drawStage(boxes) {
+  stageEmpty.style.display = 'none';
+  filmstrip.classList.remove('show');
+  canvas.style.display = 'block';
+  const maxW = stage.clientWidth;
+  const maxH = stage.clientHeight;
+  const iw = currentImage.width, ih = currentImage.height;
+  const scale = Math.min(maxW / iw, maxH / ih);
+  canvas.width = iw * scale;
+  canvas.height = ih * scale;
+  ctx.drawImage(currentImage, 0, 0, canvas.width, canvas.height);
+
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 2; i++) {
+    ctx.beginPath();
+    ctx.moveTo(canvas.width * i / 3, 0);
+    ctx.lineTo(canvas.width * i / 3, canvas.height);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.moveTo(0, canvas.height * i / 3);
+    ctx.lineTo(canvas.width, canvas.height * i / 3);
+    ctx.stroke();
+  }
+
+  if (boxes) drawBrackets(ctx, canvas.width, canvas.height, boxes);
+}
+
+function drawBrackets(targetCtx, w, h, boxes) {
+  boxes.forEach((b, i) => {
+    const x = b.x * w, y = b.y * h;
+    const bw = b.width * w, bh = b.height * h;
+    targetCtx.strokeStyle = '#e8a23d';
+    targetCtx.lineWidth = 2;
+    const L = 14;
+    const corners = [[x,y,1,1],[x+bw,y,-1,1],[x,y+bh,1,-1],[x+bw,y+bh,-1,-1]];
+    corners.forEach(([cx,cy,dx,dy]) => {
+      targetCtx.beginPath();
+      targetCtx.moveTo(cx, cy + L*dy);
+      targetCtx.lineTo(cx, cy);
+      targetCtx.lineTo(cx + L*dx, cy);
+      targetCtx.stroke();
+    });
+    targetCtx.fillStyle = '#e8a23d';
+    targetCtx.font = '600 11px Inter, sans-serif';
+    targetCtx.fillText(String(i+1), x + 6, y + 16);
+  });
+}
+
+window.addEventListener('resize', () => { if (mode === 'image' && currentImage) drawStage(); });
+
+btnAnalyze.addEventListener('click', async () => {
+  const hasMedia = mode === 'image' && currentImage;
+  if (!hasMedia) return;
+
+  errorEl.classList.remove('show');
+  resultsEl.classList.remove('show');
+  resultsList.innerHTML = '';
+  statusEl.classList.add('show');
+  btnAnalyze.disabled = true;
+
+  const payloadKB = Math.round((currentBase64.length * 0.75) / 1024);
+  let elapsed = 0;
+  statusText.textContent = 'Reading the scene… (image ~' + payloadKB + ' KB, 0s)';
+  const tickInterval = setInterval(() => {
+    elapsed += 1;
+    statusText.textContent = 'Reading the scene… (image ~' + payloadKB + ' KB, ' + elapsed + 's)';
+  }, 1000);
+
+  const styleRules = `Apply these composition preferences, which reflect this specific photographer's established style based on extensive testing:
+
+SUBJECT REQUIREMENT — check this first, before anything else:
+- Before choosing each crop, identify what the SUBJECT is and what STORY or idea this specific snippet is telling. If you can't name a clear subject and a reason someone would want to look at this particular crop, it's not a strong snippet — regardless of how technically correct the margins and centering are.
+- Every snippet must have a clear, identifiable subject or point of interest that the eye can lock onto immediately — not just pleasant texture, color, or empty sky/cloud with nothing distinct in it. Concrete example of what NOT to do: a crop that is only tree canopy/foliage filling the frame, with no other distinguishing element, subject, or focal point — this fails the requirement even if the color and texture look pleasant. If a candidate crop is basically "just leaves" or "just sky" with nothing else, discard it and find a different crop.
+- A repeating pattern (evenly spaced trunks, a rhythmic row of shapes, echoing silhouettes) CAN itself be a valid subject and carry a snippet on its own — but only if the pattern is genuinely eye-catching and clearly the point of the shot, not incidental background filler. Hold it to the same bar as any other subject choice: does it tell a visual story on its own.
+- Reserve a centered subject with generous negative space for genuinely striking, singular subjects only — a dramatic cloud formation, a distinctive rooffline, a uniquely shaped tree. An ordinary tree or shrub is usually NOT dramatic enough to carry a mostly-empty frame alone; a shot like that will read as boring even if the margins and centering are technically correct.
+- For ordinary yard, garden, or everyday scenes without one obviously striking subject, default to COMBINING elements into one composition rather than isolating a single ordinary element. This has consistently tested stronger than isolating one plain subject.
+- Don't artificially cap this at exactly two elements or crop too tightly around a minimal pairing. When the scene supports it, a wider, richer composition that layers in several complementary elements (e.g. a tree pairing plus a glimpse of the real house facade plus more of a dramatic sky, all in one frame) has tested stronger than a tightly-cropped minimal pairing of just two things. Favor pulling back to include more of what's actually adding to the story, as long as the composition stays coherent and each included element still earns its place — don't widen the crop just to include more without a reason.
+- Strongest tested pairing: a natural vertical element (a tree, a distinctive branch or canopy shape) combined with a hard-edged architectural element (a roofline, a gazebo or pergola roof, a structure, or the actual house itself) in the same frame. This natural-plus-architectural contrast has repeatedly outperformed shots of either element alone across many test rounds — actively look for this pairing when the scene offers it, even over other options, and prefer including a real architectural element (an actual house facade, window, or roofline) over a smaller garden structure when both are available in the same wider frame.
+
+FRAMING AND MARGIN:
+- Never crop through any edge — top, bottom, left, or right — of a subject you're naming as the reason for the shot. The full extent of whatever you describe in "reason" must be fully contained in the crop with clear margin around it, not sliced off or touching the frame edge. This applies especially to the top of a vertical subject (a tall tree, a distinctive cloud, a peak) — cutting it off is a basic composition error, not a style choice, unless the crop is deliberately an abstract close-up texture detail not claiming to show that subject's full form.
+- When balancing two subjects against each other (e.g. a tree and a house), place them deliberately using the rule of thirds — one subject roughly on one third-line, the other on the opposing third-line — with real breathing room from the frame edges on both sides. Don't just pack elements in until they technically fit; leave visible margin around each.
+- Look for natural frames — gaps in foliage, branches, archways, structures — that frame a background subject through them. A shot using foreground trees to frame a distant house or view is often stronger than isolating either the foreground or the background subject alone.
+- When a foreground texture is available (pavement, grass, rock, water), let it anchor the bottom of the frame rather than cropping it out.
+- Use leading lines (paths, edges, water, fences) when the scene offers them.
+- Snippets may overlap or share content with each other — don't force artificial separation between them. Each snippet should represent a genuinely different compositional idea, but "different" means a different idea, not necessarily disjoint, non-overlapping content.`;
+
+  const varietyRules = `Vary both the SHAPE and the SCALE of the snippets — don't default to similar-looking boxes:
+- Shape: pick aspect ratios deliberately based on the subject, not a fixed default. Consider square (1:1), landscape (4:3 or 3:2), wide landscape (16:9), and portrait/vertical (4:5 or 9:16) — whichever ratio actually suits each specific subject. Do not make all snippets the same shape as each other.
+- Scale: include real variety in how tightly you crop. At least one snippet should be a true zoomed-in detail — a small fraction of the source width AND height, isolating one specific subject or texture closely. Don't let every snippet span the full height of the source.`;
+
+  const prompt = `You are a photography composition assistant embedded in an app called Vantage. The attached image is a wide scene a user just captured — either a single photo, or a composite built by stitching several frames from a slow pan side by side (in which case there may be faint seams between segments; treat the image as one continuous scene regardless). Identify up to 3 strong crop regions anywhere within this image, including regions that span across a seam if present, that would make compelling standalone photos.
+
+${styleRules}
+
+${varietyRules}
+
+Before finalizing your answer, check each of your chosen snippets one more time: does it have a nameable subject, or is it just texture/color/sky with nothing to focus on? If any snippet fails that check, replace it with a different crop rather than including it anyway.
+
+Respond with ONLY raw JSON, no markdown fences, no commentary, in exactly this shape:
+{"snippets":[{"title":"short 2-4 word title","x":0.0,"y":0.0,"width":0.0,"height":0.0,"reason":"one short sentence on why this crop and its aspect ratio work"}]}
+
+x, y, width, height are fractions of the full image (0 to 1), where x,y is the top-left corner of the crop box. Provide between 1 and 3 snippets depending on what the scene actually supports.`;
+
+  const parts = [
+    { inline_data: { mime_type: currentMime, data: currentBase64 } },
+    { text: prompt }
+  ];
+
+  async function callGemini() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 60000);
+    try {
+      const response = await fetch("/.netlify/functions/analyze", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts }]
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      throw err;
+    }
+  }
+
+  try {
+    let response;
+    try {
+      response = await callGemini();
+    } catch (networkErr) {
+      // One silent retry for a dropped connection or timeout before surfacing an error
+      statusText.textContent = 'Connection hiccup — retrying…';
+      response = await callGemini();
+    }
+
+    if (response.status === 503) {
+      // 503s are transient overload — worth a couple of spaced-out retries
+      // before making the user tap the button again themselves.
+      for (let attempt = 0; attempt < 2 && response.status === 503; attempt++) {
+        const waitSec = 5 * (attempt + 1);
+        for (let s = waitSec; s > 0; s--) {
+          statusText.textContent = 'Google is busy — retrying in ' + s + 's…';
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        statusText.textContent = 'Retrying…';
+        try {
+          response = await callGemini();
+        } catch (e) {
+          break;
+        }
+      }
+    }
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      let hint = '';
+      if (response.status === 400 || response.status === 403) hint = ' Check that your API key is correct.';
+      if (response.status === 404) hint = ' The model name may have changed on Google\'s side.';
+      if (response.status === 429) hint = ' Free-tier rate limit hit — wait a bit and try again.';
+      if (response.status === 503) hint = ' Google\'s servers are under sustained high demand — this can last several minutes on the free tier. Try again shortly, or try a plain photo instead of a pan.';
+      let detail = '';
+      try {
+        const parsedErr = JSON.parse(errBody);
+        if (parsedErr.error && parsedErr.error.message) detail = ' — ' + parsedErr.error.message;
+      } catch (e) {}
+      throw new Error('Request failed (' + response.status + ').' + hint + detail);
+    }
+    const data = await response.json();
+    const textBlock = data.candidates
+      && data.candidates[0]
+      && data.candidates[0].content
+      && data.candidates[0].content.parts
+      && data.candidates[0].content.parts.find(p => p.text);
+    if (!textBlock) throw new Error('No response text from model');
+
+    let clean = textBlock.text.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '');
+    const parsed = JSON.parse(clean);
+    const snippets = (parsed.snippets || []).slice(0, 3);
+    if (!snippets.length) throw new Error('No snippets returned');
+
+    statusText.textContent = 'Cropping snippets…';
+    drawStage(snippets);
+    renderResults(snippets);
+  } catch (err) {
+    let msg = err.message || 'Try again.';
+    if (err.name === 'AbortError') msg = 'The request timed out after ' + elapsed + 's — the image may be too complex for the free tier to process quickly. Try recording a shorter pan (fewer frames) or a single photo instead.';
+    else if (err.name === 'TypeError') msg = 'Network request failed after ' + elapsed + 's — check your internet connection and try again.';
+    errorEl.textContent = "Couldn't analyze this. " + msg;
+    errorEl.classList.add('show');
+  } finally {
+    clearInterval(tickInterval);
+    statusEl.classList.remove('show');
+    btnAnalyze.disabled = false;
+  }
+});
+
+function renderResults(snippets) {
+  resultsList.innerHTML = '';
+  snippets.forEach((s, i) => {
+    const sw = currentImage.width, sh = currentImage.height;
+    const x = typeof s.x === 'number' ? s.x : 0;
+    const y = typeof s.y === 'number' ? s.y : 0;
+    const w = typeof s.width === 'number' && s.width > 0 ? s.width : 1;
+    const h = typeof s.height === 'number' && s.height > 0 ? s.height : 1;
+
+    const cropCanvas = document.createElement('canvas');
+    const cw = Math.max(1, Math.round(w * sw));
+    const ch = Math.max(1, Math.round(h * sh));
+    cropCanvas.width = cw;
+    cropCanvas.height = ch;
+    const cctx = cropCanvas.getContext('2d');
+    cctx.drawImage(currentImage, x*sw, y*sh, cw, ch, 0, 0, cw, ch);
+    const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.92);
+
+    const card = document.createElement('div');
+    card.className = 'snippet-card';
+    card.innerHTML = `
+      <img class="snippet-img" src="${dataUrl}">
+      <div class="snippet-body">
+        <div class="snippet-num">SNIPPET ${i+1}</div>
+        <div class="snippet-title">${escapeHtml(s.title || 'Untitled')}</div>
+        <p class="snippet-reason">${escapeHtml(s.reason || '')}</p>
+        <div class="snippet-actions">
+          <button class="save-btn">Save image</button>
+        </div>
+      </div>
+    `;
+    card.querySelector('.save-btn').addEventListener('click', () => {
+      const a = document.createElement('a');
+      a.href = dataUrl;
+      a.download = 'vantage-snippet-' + (i+1) + '.jpg';
+      a.click();
+    });
+    resultsList.appendChild(card);
+  });
+  resultsEl.classList.add('show');
+}
+
+function escapeHtml(str) {
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+</script>
+
+</body>
+</html>
