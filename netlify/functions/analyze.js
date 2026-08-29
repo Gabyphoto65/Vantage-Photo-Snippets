@@ -3,19 +3,19 @@
 // Site settings -> Environment variables (never commit it to the repo).
 
 exports.handler = async function (event) {
-  if (event.httpMethod !== 'POST') {
-    return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
-  }
-
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    return {
-      statusCode: 500,
-      body: JSON.stringify({ error: 'Server is not configured with a Gemini API key yet.' })
-    };
-  }
-
   try {
+    if (event.httpMethod !== 'POST') {
+      return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
+    }
+
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      return {
+        statusCode: 500,
+        body: JSON.stringify({ error: 'Server is not configured with a Gemini API key yet.' })
+      };
+    }
+
     const upstream = await fetch(
       'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
       {
@@ -36,9 +36,15 @@ exports.handler = async function (event) {
       body: bodyText
     };
   } catch (err) {
+    // Catches anything unexpected (not just the fetch call) so the client
+    // always gets readable JSON instead of a bare platform 500.
     return {
       statusCode: 502,
-      body: JSON.stringify({ error: 'Could not reach Gemini: ' + err.message })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        error: 'Vantage backend error: ' + (err && err.message ? err.message : String(err)),
+        stack: err && err.stack ? String(err.stack).split('\n').slice(0, 3).join(' | ') : undefined
+      })
     };
   }
 };
