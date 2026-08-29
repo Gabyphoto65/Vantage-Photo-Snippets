@@ -700,8 +700,14 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
       let detail = '';
       try {
         const parsedErr = JSON.parse(errBody);
-        if (parsedErr.error && parsedErr.error.message) detail = ' — ' + parsedErr.error.message;
-      } catch (e) {}
+        if (parsedErr.error && parsedErr.error.message) {
+          detail = ' — ' + parsedErr.error.message;
+        } else if (errBody) {
+          detail = ' — raw response: ' + errBody.slice(0, 300);
+        }
+      } catch (e) {
+        if (errBody) detail = ' — raw response: ' + errBody.slice(0, 300);
+      }
       throw new Error('Request failed (' + response.status + ').' + hint + detail);
     }
     const data = await response.json();
