@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Vantage — pano composition assistant</title>
+<title>Add Vantage — pano composition assistant</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=Inter:wght@400;500&display=swap" rel="stylesheet">
@@ -222,7 +222,7 @@
 
 <header>
   <div class="row">
-    <h1>Vantage</h1>
+    <h1>Add Vantage</h1>
     <span class="tag">prototype</span>
   </div>
 </header>
@@ -271,7 +271,7 @@
   </div>
 
   <div class="foot-note">
-    <b>About this prototype.</b> Vantage analyzes your photo through a private backend — no API key to set up, nothing to paste in. Take a photo, record a slow pan of a scene, or choose an existing photo/video from your library. Add this page to your home screen (Share → Add to Home Screen) for quick access. This is a small private beta, not a public App Store app.
+    <b>About this prototype.</b> Add Vantage analyzes your photo through a private backend — no API key to set up, nothing to paste in. Take a photo, record a slow pan of a scene, or choose an existing photo/video from your library. Add this page to your home screen (Share → Add to Home Screen) for quick access. This is a small private beta, not a public App Store app.
   </div>
 
 </main>
@@ -640,7 +640,7 @@ FRAMING AND MARGIN:
 - Shape: pick aspect ratios deliberately based on the subject, not a fixed default. Consider square (1:1), landscape (4:3 or 3:2), wide landscape (16:9), and portrait/vertical (4:5 or 9:16) — whichever ratio actually suits each specific subject. Do not make all snippets the same shape as each other.
 - Scale: include real variety in how tightly you crop. At least one snippet should be a true zoomed-in detail — a small fraction of the source width AND height, isolating one specific subject or texture closely. Don't let every snippet span the full height of the source.`;
 
-  const prompt = `You are a photography composition assistant embedded in an app called Vantage. The attached image is a wide scene a user just captured — either a single photo, or a composite built by stitching several frames from a slow pan side by side (in which case there may be faint seams between segments; treat the image as one continuous scene regardless). Identify up to 3 strong crop regions anywhere within this image, including regions that span across a seam if present, that would make compelling standalone photos.
+  const prompt = `You are a photography composition assistant embedded in an app called Add Vantage. The attached image is a wide scene a user just captured — either a single photo, or a composite built by stitching several frames from a slow pan side by side (in which case there may be faint seams between segments; treat the image as one continuous scene regardless). Identify up to 3 strong crop regions anywhere within this image, including regions that span across a seam if present, that would make compelling standalone photos.
 
 ${styleRules}
 
@@ -662,7 +662,7 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 60000);
     try {
-      const response = await fetch("/.netlify/functions/analyze", {
+      const response = await fetch("/api/analyze", {
         method: "POST",
         headers: {
           "Content-Type": "application/json"
