@@ -296,6 +296,7 @@ const resultsEl = document.getElementById('results');
 const resultsList = document.getElementById('results-list');
 
 let mode = null; // 'image' | 'video'
+let sourceType = 'photo'; // 'photo' | 'video' — for feedback labeling only
 let currentImage = null;      // single Image, image mode
 let currentBase64 = null;
 let currentMime = 'image/jpeg';
@@ -353,6 +354,7 @@ function handleFile(file) {
   resetOutputs();
   currentImage = null;
   frames = [];
+  sourceType = file.type.startsWith('video/') ? 'video' : 'photo';
 
   if (file.type.startsWith('video/')) {
     statusEl.classList.add('show');
@@ -649,10 +651,10 @@ ${varietyRules}
 
 Before finalizing your answer, check each of your chosen snippets one more time: does it have a nameable subject, or is it just texture/color/sky with nothing to focus on? If any snippet fails that check, replace it with a different crop rather than including it anyway.
 
-Respond with ONLY raw JSON, no markdown fences, no commentary, in exactly this shape:
-{"snippets":[{"title":"short 2-4 word title","x":0.0,"y":0.0,"width":0.0,"height":0.0,"reason":"one short sentence on why this crop and its aspect ratio work"}]}
+Respond with ONE complete JSON object per line — no wrapping array, no markdown fences, no blank lines between entries, no commentary before or after. Each line must be a complete, self-contained, valid JSON object in exactly this shape:
+{"title":"short 2-4 word title","x":0.0,"y":0.0,"width":0.0,"height":0.0,"reason":"one short sentence on why this crop and its aspect ratio work"}
 
-x, y, width, height are fractions of the full image (0 to 1), where x,y is the top-left corner of the crop box. Provide between 1 and 3 snippets depending on what the scene actually supports.`;
+x, y, width, height are fractions of the full image (0 to 1), where x,y is the top-left corner of the crop box. Output your strongest, most confident snippet FIRST, since it will be shown to the user before the others finish generating. Provide between 1 and 3 lines depending on what the scene actually supports.`;
 
   const parts = [
     { inline_data: { mime_type: currentMime, data: currentBase64 } },
@@ -729,22 +731,47 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
       }
       throw new Error('Request failed (' + response.status + ').' + hint + detail);
     }
-    const data = await response.json();
-    const textBlock = data.candidates
-      && data.candidates[0]
-      && data.candidates[0].content
-      && data.candidates[0].content.parts
-      && data.candidates[0].content.parts.find(p => p.text);
-    if (!textBlock) throw new Error('No response text from model');
+    // Stream the response: render each snippet the moment its line is
+    // complete, rather than waiting for the whole answer.
+    resultsEl.classList.add('show');
+    let liveSnippets = [];
+    let snippetCount = 0;
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let pending = '';
 
-    let clean = textBlock.text.trim().replace(/^```json\s*/i, '').replace(/^```\s*/i, '').replace(/```\s*$/i, '');
-    const parsed = JSON.parse(clean);
-    const snippets = (parsed.snippets || []).slice(0, 3);
-    if (!snippets.length) throw new Error('No snippets returned');
+    function tryConsumeLine(line) {
+      const trimmed = line.trim();
+      if (!trimmed) return;
+      let snippet;
+      try {
+        snippet = JSON.parse(trimmed);
+      } catch (e) {
+        return; // stray text, a stray code-fence line, or a not-yet-complete line — skip it
+      }
+      if (typeof snippet.x !== 'number' || typeof snippet.y !== 'number') return;
+      snippetCount++;
+      liveSnippets.push(snippet);
+      statusText.textContent = 'Found snippet ' + snippetCount + '… (' + elapsed + 's)';
+      drawStage(liveSnippets);
+      renderOneSnippet(snippet, snippetCount - 1);
+    }
 
-    statusText.textContent = 'Cropping snippets…';
-    drawStage(snippets);
-    renderResults(snippets);
+    while (snippetCount < 3) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      pending += decoder.decode(value, { stream: true });
+      const lines = pending.split('\n');
+      pending = lines.pop() ?? '';
+      for (const line of lines) {
+        tryConsumeLine(line);
+        if (snippetCount >= 3) break;
+      }
+    }
+    if (snippetCount < 3 && pending.trim()) tryConsumeLine(pending);
+
+    if (!snippetCount) throw new Error('No snippets returned');
+    statusText.textContent = 'Done.';
   } catch (err) {
     let msg = err.message || 'Try again.';
     if (err.name === 'AbortError') msg = 'The request timed out after ' + elapsed + 's — the image may be too complex for the free tier to process quickly. Try recording a shorter pan (fewer frames) or a single photo instead.';
@@ -758,46 +785,64 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
   }
 });
 
-function renderResults(snippets) {
-  resultsList.innerHTML = '';
-  snippets.forEach((s, i) => {
-    const sw = currentImage.width, sh = currentImage.height;
-    const x = typeof s.x === 'number' ? s.x : 0;
-    const y = typeof s.y === 'number' ? s.y : 0;
-    const w = typeof s.width === 'number' && s.width > 0 ? s.width : 1;
-    const h = typeof s.height === 'number' && s.height > 0 ? s.height : 1;
+function renderOneSnippet(s, i) {
+  const sw = currentImage.width, sh = currentImage.height;
+  const x = typeof s.x === 'number' ? s.x : 0;
+  const y = typeof s.y === 'number' ? s.y : 0;
+  const w = typeof s.width === 'number' && s.width > 0 ? s.width : 1;
+  const h = typeof s.height === 'number' && s.height > 0 ? s.height : 1;
 
-    const cropCanvas = document.createElement('canvas');
-    const cw = Math.max(1, Math.round(w * sw));
-    const ch = Math.max(1, Math.round(h * sh));
-    cropCanvas.width = cw;
-    cropCanvas.height = ch;
-    const cctx = cropCanvas.getContext('2d');
-    cctx.drawImage(currentImage, x*sw, y*sh, cw, ch, 0, 0, cw, ch);
-    const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.92);
+  const cropCanvas = document.createElement('canvas');
+  const cw = Math.max(1, Math.round(w * sw));
+  const ch = Math.max(1, Math.round(h * sh));
+  cropCanvas.width = cw;
+  cropCanvas.height = ch;
+  const cctx = cropCanvas.getContext('2d');
+  cctx.drawImage(currentImage, x*sw, y*sh, cw, ch, 0, 0, cw, ch);
+  const dataUrl = cropCanvas.toDataURL('image/jpeg', 0.92);
 
-    const card = document.createElement('div');
-    card.className = 'snippet-card';
-    card.innerHTML = `
-      <img class="snippet-img" src="${dataUrl}">
-      <div class="snippet-body">
-        <div class="snippet-num">SNIPPET ${i+1}</div>
-        <div class="snippet-title">${escapeHtml(s.title || 'Untitled')}</div>
-        <p class="snippet-reason">${escapeHtml(s.reason || '')}</p>
-        <div class="snippet-actions">
-          <button class="save-btn">Save image</button>
-        </div>
+  const card = document.createElement('div');
+  card.className = 'snippet-card';
+  card.innerHTML = `
+    <img class="snippet-img" src="${dataUrl}">
+    <div class="snippet-body">
+      <div class="snippet-num">SNIPPET ${i+1}</div>
+      <div class="snippet-title">${escapeHtml(s.title || 'Untitled')}</div>
+      <p class="snippet-reason">${escapeHtml(s.reason || '')}</p>
+      <div class="snippet-actions">
+        <button class="save-btn">Save image</button>
+        <button class="like-btn">Good pick</button>
       </div>
-    `;
-    card.querySelector('.save-btn').addEventListener('click', () => {
-      const a = document.createElement('a');
-      a.href = dataUrl;
-      a.download = 'vantage-snippet-' + (i+1) + '.jpg';
-      a.click();
-    });
-    resultsList.appendChild(card);
+    </div>
+  `;
+  card.querySelector('.save-btn').addEventListener('click', () => {
+    const a = document.createElement('a');
+    a.href = dataUrl;
+    a.download = 'vantage-snippet-' + (i+1) + '.jpg';
+    a.click();
   });
-  resultsEl.classList.add('show');
+  card.querySelector('.like-btn').addEventListener('click', (e) => {
+    const btn = e.target;
+    btn.textContent = 'Saving…';
+    btn.disabled = true;
+    fetch('/.netlify/functions/feedback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        title: s.title || 'Untitled',
+        reason: s.reason || '',
+        mode: sourceType,
+        imageBase64: dataUrl.split(',')[1]
+      })
+    }).then(res => {
+      if (!res.ok) throw new Error('failed');
+      btn.textContent = 'Thanks! ✓';
+    }).catch(() => {
+      btn.textContent = 'Couldn\'t save — try again';
+      btn.disabled = false;
+    });
+  });
+  resultsList.appendChild(card);
 }
 
 function escapeHtml(str) {
