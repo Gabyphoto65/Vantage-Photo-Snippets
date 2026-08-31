@@ -659,7 +659,7 @@ ${varietyRules}
 Your output streams to the user line by line — once you commit to a line, it is shown immediately and cannot be revised. Because of this, do the checking BEFORE each line, not after: for every snippet, before you output its line, mentally verify it against the margin rule above (no cropped-off top of a tree, cloud, or other named subject) and the subject rule above (a real nameable subject, not just texture). Only output the line once it passes both checks. Do not rely on catching mistakes afterward — there is no afterward once a line is sent.
 
 Respond with ONE complete JSON object per line — no wrapping array, no markdown fences, no blank lines between entries, no commentary before or after. Each line must be a complete, self-contained, valid JSON object in exactly this shape:
-{"title":"short 2-4 word title","x":0.0,"y":0.0,"width":0.0,"height":0.0,"reason":"one short sentence on why this crop and its aspect ratio work"}
+{"title":"short 2-4 word title","x":0.0,"y":0.0,"width":0.0,"height":0.0,"reason":"under 10 words on why this crop works"}
 
 x, y, width, height are fractions of the full image (0 to 1), where x,y is the top-left corner of the crop box. Output your strongest, most confident snippet FIRST, since it will be shown to the user before the others finish generating — but "first" does not mean "fastest" or "less scrutinized." Apply the exact same margin and subject checks to this first snippet as to every other one; being shown first is not a reason to be less careful about it. Provide between 1 and 3 lines depending on what the scene actually supports.`;
 
@@ -675,7 +675,8 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
         "Content-Type": "application/json"
       },
       body: JSON.stringify({
-        contents: [{ role: "user", parts }]
+        contents: [{ role: "user", parts }],
+        generationConfig: { thinkingConfig: { thinkingLevel: "low" } }
       }),
       signal: streamController.signal
     });
@@ -773,7 +774,7 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
   } catch (err) {
     let msg = err.message || 'Try again.';
     if (err.name === 'AbortError') msg = 'The request timed out after ' + elapsed + 's — the image may be too complex for the free tier to process quickly. Try recording a shorter pan (fewer frames) or a single photo instead.';
-    else if (err.name === 'TypeError') msg = 'Network request failed after ' + elapsed + 's — check your internet connection and try again.';
+    else if (err.name === 'TypeError') msg = 'The connection was cut off after ' + elapsed + 's — this looks like a server-side limit on long-running requests, not your internet connection. Try again, or try a photo instead of a pan if it keeps happening.';
     if (snippetCount > 0) {
       // Don't frame this as a full failure when some snippets already
       // rendered successfully — they're still on screen and still usable.
