@@ -831,6 +831,7 @@ function renderOneSnippet(s, i) {
     const btn = e.target;
     btn.textContent = 'Saving…';
     btn.disabled = true;
+    const upload = toUploadBase64(cropCanvas, 1400, 0.85);
     fetch('/.netlify/functions/feedback', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -838,7 +839,7 @@ function renderOneSnippet(s, i) {
         title: s.title || 'Untitled',
         reason: s.reason || '',
         mode: sourceType,
-        imageBase64: dataUrl.split(',')[1]
+        imageBase64: upload.base64
       })
     }).then(res => {
       if (!res.ok) throw new Error('failed');
