@@ -613,11 +613,18 @@ btnAnalyze.addEventListener('click', async () => {
 
   const payloadKB = Math.round((currentBase64.length * 0.75) / 1024);
   let elapsed = 0;
+  let snippetCount = 0;
   statusText.textContent = 'Reading the scene… (image ~' + payloadKB + ' KB, 0s)';
   const tickInterval = setInterval(() => {
     elapsed += 1;
     statusText.textContent = 'Reading the scene… (image ~' + payloadKB + ' KB, ' + elapsed + 's)';
   }, 1000);
+
+  // Covers the ENTIRE operation, including reading the streamed response —
+  // not just until the connection opens. 90s gives real room for a full
+  // 3-snippet response on a slow free-tier moment.
+  const streamController = new AbortController();
+  const streamTimeoutId = setTimeout(() => streamController.abort(), 90000);
 
   const styleRules = `Apply these composition preferences, which reflect this specific photographer's established style based on extensive testing:
 
@@ -649,12 +656,12 @@ ${styleRules}
 
 ${varietyRules}
 
-Before finalizing your answer, check each of your chosen snippets one more time: does it have a nameable subject, or is it just texture/color/sky with nothing to focus on? If any snippet fails that check, replace it with a different crop rather than including it anyway.
+Your output streams to the user line by line — once you commit to a line, it is shown immediately and cannot be revised. Because of this, do the checking BEFORE each line, not after: for every snippet, before you output its line, mentally verify it against the margin rule above (no cropped-off top of a tree, cloud, or other named subject) and the subject rule above (a real nameable subject, not just texture). Only output the line once it passes both checks. Do not rely on catching mistakes afterward — there is no afterward once a line is sent.
 
 Respond with ONE complete JSON object per line — no wrapping array, no markdown fences, no blank lines between entries, no commentary before or after. Each line must be a complete, self-contained, valid JSON object in exactly this shape:
 {"title":"short 2-4 word title","x":0.0,"y":0.0,"width":0.0,"height":0.0,"reason":"one short sentence on why this crop and its aspect ratio work"}
 
-x, y, width, height are fractions of the full image (0 to 1), where x,y is the top-left corner of the crop box. Output your strongest, most confident snippet FIRST, since it will be shown to the user before the others finish generating. Provide between 1 and 3 lines depending on what the scene actually supports.`;
+x, y, width, height are fractions of the full image (0 to 1), where x,y is the top-left corner of the crop box. Output your strongest, most confident snippet FIRST, since it will be shown to the user before the others finish generating — but "first" does not mean "fastest" or "less scrutinized." Apply the exact same margin and subject checks to this first snippet as to every other one; being shown first is not a reason to be less careful about it. Provide between 1 and 3 lines depending on what the scene actually supports.`;
 
   const parts = [
     { inline_data: { mime_type: currentMime, data: currentBase64 } },
@@ -662,25 +669,17 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
   ];
 
   async function callGemini() {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 60000);
-    try {
-      const response = await fetch("/api/analyze", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json"
-        },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }]
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-      return response;
-    } catch (err) {
-      clearTimeout(timeoutId);
-      throw err;
-    }
+    const response = await fetch("/api/analyze", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        contents: [{ role: "user", parts }]
+      }),
+      signal: streamController.signal
+    });
+    return response;
   }
 
   try {
@@ -735,7 +734,6 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
     // complete, rather than waiting for the whole answer.
     resultsEl.classList.add('show');
     let liveSnippets = [];
-    let snippetCount = 0;
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
     let pending = '';
@@ -776,10 +774,17 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
     let msg = err.message || 'Try again.';
     if (err.name === 'AbortError') msg = 'The request timed out after ' + elapsed + 's — the image may be too complex for the free tier to process quickly. Try recording a shorter pan (fewer frames) or a single photo instead.';
     else if (err.name === 'TypeError') msg = 'Network request failed after ' + elapsed + 's — check your internet connection and try again.';
-    errorEl.textContent = "Couldn't analyze this. " + msg;
+    if (snippetCount > 0) {
+      // Don't frame this as a full failure when some snippets already
+      // rendered successfully — they're still on screen and still usable.
+      errorEl.textContent = 'Got ' + snippetCount + ' of up to 3 snippets, then stopped: ' + msg;
+    } else {
+      errorEl.textContent = "Couldn't analyze this. " + msg;
+    }
     errorEl.classList.add('show');
   } finally {
     clearInterval(tickInterval);
+    clearTimeout(streamTimeoutId);
     statusEl.classList.remove('show');
     btnAnalyze.disabled = false;
   }
