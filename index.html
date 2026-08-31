@@ -676,7 +676,7 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
       },
       body: JSON.stringify({
         contents: [{ role: "user", parts }],
-        generationConfig: { thinkingConfig: { thinkingLevel: "low" } }
+        generationConfig: { thinkingConfig: { thinkingLevel: "minimal" } }
       }),
       signal: streamController.signal
     });
@@ -731,13 +731,13 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
       }
       throw new Error('Request failed (' + response.status + ').' + hint + detail);
     }
-    // Stream the response: render each snippet the moment its line is
-    // complete, rather than waiting for the whole answer.
+    // Non-streaming: wait for the complete response, then render all
+    // snippets it contains. Less responsive than streaming, but the whole
+    // request either succeeds or fails as one clean unit, with no risk of
+    // a mid-stream cutoff from the platform's execution ceiling.
     resultsEl.classList.add('show');
     let liveSnippets = [];
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let pending = '';
+    const fullText = await response.text();
 
     function tryConsumeLine(line) {
       const trimmed = line.trim();
@@ -746,28 +746,19 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
       try {
         snippet = JSON.parse(trimmed);
       } catch (e) {
-        return; // stray text, a stray code-fence line, or a not-yet-complete line — skip it
+        return; // stray text or a stray code-fence line — skip it
       }
       if (typeof snippet.x !== 'number' || typeof snippet.y !== 'number') return;
       snippetCount++;
       liveSnippets.push(snippet);
-      statusText.textContent = 'Found snippet ' + snippetCount + '… (' + elapsed + 's)';
       drawStage(liveSnippets);
       renderOneSnippet(snippet, snippetCount - 1);
     }
 
-    while (snippetCount < 3) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      pending += decoder.decode(value, { stream: true });
-      const lines = pending.split('\n');
-      pending = lines.pop() ?? '';
-      for (const line of lines) {
-        tryConsumeLine(line);
-        if (snippetCount >= 3) break;
-      }
+    for (const line of fullText.split('\n')) {
+      tryConsumeLine(line);
+      if (snippetCount >= 3) break;
     }
-    if (snippetCount < 3 && pending.trim()) tryConsumeLine(pending);
 
     if (!snippetCount) throw new Error('No snippets returned');
     statusText.textContent = 'Done.';
