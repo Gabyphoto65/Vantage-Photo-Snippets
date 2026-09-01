@@ -3,9 +3,13 @@
 // for periodically reviewing patterns and refining the prompt. Not
 // password-protected: relying on the URL being unlisted rather than
 // shared publicly. Fine for a small private beta, not for wider use.
-const { getStore } = require('@netlify/blobs');
+const { getStore, connectLambda } = require('@netlify/blobs');
 
-exports.handler = async function () {
+exports.handler = async function (event) {
+  // Same Lambda-compatibility-mode fix as feedback.js — without this,
+  // getStore() below throws MissingBlobsEnvironmentError in production.
+  connectLambda(event);
+
   try {
     const store = getStore({ name: 'add-vantage-feedback' });
     const { blobs } = await store.list();

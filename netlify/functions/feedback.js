@@ -1,8 +1,14 @@
 // Stores "good pick" feedback using Netlify Blobs — a zero-setup key/value
 // store built into Netlify, no external database needed.
-const { getStore } = require('@netlify/blobs');
+const { getStore, connectLambda } = require('@netlify/blobs');
 
 exports.handler = async function (event) {
+  // This handler uses the classic (event) => {} signature, which Netlify
+  // Blobs calls "Lambda compatibility mode." In that mode the store's
+  // credentials aren't auto-injected — connectLambda(event) wires them up
+  // from the incoming request before getStore() is called below.
+  connectLambda(event);
+
   if (event.httpMethod !== 'POST') {
     return { statusCode: 405, body: JSON.stringify({ error: 'Method not allowed' }) };
   }
