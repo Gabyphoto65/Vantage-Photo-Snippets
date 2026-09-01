@@ -414,16 +414,92 @@ function renderFilmstrip(highlightRange) {
   });
 }
 
+function frameToCanvas(f) {
+  const c = document.createElement('canvas');
+  c.width = f.width; c.height = f.height;
+  c.getContext('2d').drawImage(f.img, 0, 0);
+  return c;
+}
+
+// Compares the trailing edge of `prevCanvas` against the leading edge of
+// `nextCanvas` at a range of horizontal offsets, using a cheap grayscale
+// pixel-difference search over a mid-height band (avoids sky/ground, which
+// tend to be too uniform to align on). Returns the offset (in pixels, from
+// the right edge of prevCanvas) with the best match, and how confident that
+// match is — a high score means no strong match was found, i.e. the two
+// frames likely don't overlap much and should be treated as distinct.
+function estimateOverlap(prevCanvas, nextCanvas) {
+  const w = prevCanvas.width;
+  const bandY = Math.floor(prevCanvas.height * 0.3);
+  const bandH = Math.max(1, Math.floor(prevCanvas.height * 0.4));
+
+  function bandData(canvas) {
+    const c = document.createElement('canvas');
+    c.width = w; c.height = bandH;
+    c.getContext('2d').drawImage(canvas, 0, bandY, w, bandH, 0, 0, w, bandH);
+    return c.getContext('2d').getImageData(0, 0, w, bandH).data;
+  }
+
+  const prevData = bandData(prevCanvas);
+  const nextData = bandData(nextCanvas);
+  const gray = (data, x, y) => {
+    const idx = (y * w + x) * 4;
+    return (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+  };
+
+  let bestOverlap = 0;
+  let bestScore = Infinity;
+  const minOverlap = Math.floor(w * 0.15);
+  const maxOverlap = Math.floor(w * 0.85);
+
+  for (let overlap = minOverlap; overlap <= maxOverlap; overlap += 4) {
+    let diff = 0, samples = 0;
+    for (let y = 0; y < bandH; y += 4) {
+      for (let x = 0; x < overlap; x += 8) {
+        const px = w - overlap + x;
+        if (px < 0 || x >= w) continue;
+        diff += Math.abs(gray(prevData, px, y) - gray(nextData, x, y));
+        samples++;
+      }
+    }
+    if (!samples) continue;
+    const score = diff / samples;
+    if (score < bestScore) { bestScore = score; bestOverlap = overlap; }
+  }
+
+  return { overlap: bestOverlap, score: bestScore };
+}
+
 function buildComposite(frameList) {
-  // Naive side-by-side concatenation — frames share identical dimensions
-  // since they all come from the same video source.
-  const fw = frameList[0].width, fh = frameList[0].height;
+  const canvases = frameList.map(frameToCanvas);
+  if (canvases.length === 1) {
+    const dataUrl = canvases[0].toDataURL('image/jpeg', 0.85);
+    return { dataUrl, base64: dataUrl.split(',')[1] };
+  }
+
+  const fw = canvases[0].width, fh = canvases[0].height;
+  // A pan sampled evenly by time (not by how far the camera actually moved)
+  // usually has real overlap between consecutive frames. Trim each frame
+  // down to roughly its new content before pasting, instead of assuming
+  // every frame is a distinct, non-overlapping tile.
+  const segments = [{ canvas: canvases[0], sx: 0, width: fw }];
+  for (let i = 1; i < canvases.length; i++) {
+    const { overlap, score } = estimateOverlap(canvases[i - 1], canvases[i]);
+    const confidentMatch = score < 28; // low score = strong pixel-level agreement
+    const width = confidentMatch ? Math.max(fw - overlap, Math.round(fw * 0.15)) : fw;
+    const sx = confidentMatch ? overlap : 0;
+    segments.push({ canvas: canvases[i], sx, width });
+  }
+
+  const totalWidth = segments.reduce((sum, s) => sum + s.width, 0);
   const combinedCanvas = document.createElement('canvas');
-  combinedCanvas.width = fw * frameList.length;
+  combinedCanvas.width = totalWidth;
   combinedCanvas.height = fh;
   const cctx = combinedCanvas.getContext('2d');
-  frameList.forEach((f, i) => {
-    cctx.drawImage(f.img, i * fw, 0, fw, fh);
+  let cursorX = 0;
+  segments.forEach(seg => {
+    cctx.drawImage(seg.canvas, seg.sx, 0, seg.width, fh, cursorX, 0, seg.width, fh);
+    cursorX += seg.width;
   });
   const dataUrl = combinedCanvas.toDataURL('image/jpeg', 0.85);
   return { dataUrl, base64: dataUrl.split(',')[1] };
