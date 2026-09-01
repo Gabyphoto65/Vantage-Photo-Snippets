@@ -383,7 +383,15 @@ function handleFile(file) {
       const mimeType = file.type || 'image/jpeg';
       const img = new Image();
       img.onload = () => useAsImage(img, base64, mimeType);
+      img.onerror = () => {
+        errorEl.textContent = "This browser can't display that image" + (mimeType ? ' (' + mimeType + ')' : '') + ". HEIC photos convert automatically on an iPhone, but not in every browser — try a JPG or PNG.";
+        errorEl.classList.add('show');
+      };
       img.src = dataUrl;
+    };
+    reader.onerror = () => {
+      errorEl.textContent = "Couldn't read that file. Try a different photo.";
+      errorEl.classList.add('show');
     };
     reader.readAsDataURL(file);
   }
@@ -827,12 +835,23 @@ function renderOneSnippet(s, i) {
         liked: liked,
         imageBase64: upload.base64
       })
-    }).then(res => {
-      if (!res.ok) throw new Error('failed');
+    }).then(async res => {
+      if (!res.ok) {
+        const bodyText = await res.text().catch(() => '');
+        let detail = '';
+        try {
+          const parsed = JSON.parse(bodyText);
+          if (parsed.error) detail = parsed.error;
+        } catch (e) {
+          if (bodyText) detail = bodyText.slice(0, 200);
+        }
+        throw new Error('HTTP ' + res.status + (detail ? ': ' + detail : ''));
+      }
       btn.textContent = 'Thanks! ✓';
       otherBtn.style.display = 'none';
-    }).catch(() => {
-      btn.textContent = "Couldn't save — try again";
+    }).catch((err) => {
+      console.error('Feedback save failed:', err);
+      btn.textContent = "Couldn't save (" + (err.message || 'network error') + ')';
       btn.disabled = false;
       otherBtn.disabled = false;
     });
