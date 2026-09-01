@@ -9,7 +9,7 @@ exports.handler = async function (event) {
 
   try {
     const payload = JSON.parse(event.body || '{}');
-    const { title, reason, imageBase64, mode } = payload;
+    const { title, reason, imageBase64, mode, liked } = payload;
 
     if (!imageBase64) {
       return { statusCode: 400, body: JSON.stringify({ error: 'Missing image data' }) };
@@ -22,6 +22,7 @@ exports.handler = async function (event) {
       title: title || 'Untitled',
       reason: reason || '',
       mode: mode || 'unknown',
+      liked: liked !== false, // default true for any old/malformed payloads
       imageBase64,
       savedAt: new Date().toISOString()
     });
