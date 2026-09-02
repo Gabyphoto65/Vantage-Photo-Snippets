@@ -812,32 +812,13 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
   }
 
   try {
-    let response;
-    try {
-      response = await callGemini();
-    } catch (networkErr) {
-      // One silent retry for a dropped connection or timeout before surfacing an error
-      statusText.textContent = 'Connection hiccup — retrying…';
-      response = await callGemini();
-    }
-
-    if (response.status === 503) {
-      // 503s are transient overload — worth a couple of spaced-out retries
-      // before making the user tap the button again themselves.
-      for (let attempt = 0; attempt < 2 && response.status === 503; attempt++) {
-        const waitSec = 5 * (attempt + 1);
-        for (let s = waitSec; s > 0; s--) {
-          statusText.textContent = 'Google is busy — retrying in ' + s + 's…';
-          await new Promise(r => setTimeout(r, 1000));
-        }
-        statusText.textContent = 'Retrying…';
-        try {
-          response = await callGemini();
-        } catch (e) {
-          break;
-        }
-      }
-    }
+    // No automatic retries: the free-tier Gemini quota is only 5 requests
+    // per minute, and a single tap silently retrying 2-3 times could burn
+    // most of that budget by itself — worst possible moment to do that,
+    // since it's retrying because Gemini is already under load. One clean
+    // attempt, one clear message on failure, and the user decides whether
+    // to tap again.
+    const response = await callGemini();
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
@@ -907,7 +888,21 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
     clearInterval(tickInterval);
     clearTimeout(streamTimeoutId);
     statusEl.classList.remove('show');
-    btnAnalyze.disabled = false;
+    // A brief cooldown after every attempt (success or failure) — mainly to
+    // stop an impatient double-tap from using up more of the 5/minute quota
+    // than a single real analysis needs.
+    let cooldown = 8;
+    btnAnalyze.textContent = 'Wait ' + cooldown + 's…';
+    const cooldownInterval = setInterval(() => {
+      cooldown--;
+      if (cooldown <= 0) {
+        clearInterval(cooldownInterval);
+        btnAnalyze.textContent = 'Analyze scene';
+        btnAnalyze.disabled = !currentImage;
+      } else {
+        btnAnalyze.textContent = 'Wait ' + cooldown + 's…';
+      }
+    }, 1000);
   }
 });
 
