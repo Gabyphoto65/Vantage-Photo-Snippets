@@ -337,7 +337,10 @@ function toUploadBase64(img, maxDim, quality) {
 
 function useAsImage(img, base64, mimeType) {
   currentImage = img;
-  const upload = toUploadBase64(img, 1600, 0.82);
+  // Kept deliberately smaller than the on-device display copy: Netlify Edge
+  // Functions must respond within 40s, and a large panorama at 1600px was
+  // pushing Gemini's response time close enough to that ceiling to time out.
+  const upload = toUploadBase64(img, 1200, 0.8);
   currentBase64 = upload.base64;
   currentMime = upload.mime;
   mode = 'image';
@@ -449,16 +452,34 @@ function estimateOverlap(prevCanvas, nextCanvas) {
   const maxOverlap = Math.floor(w * 0.85);
 
   for (let overlap = minOverlap; overlap <= maxOverlap; overlap += 4) {
-    let diff = 0, samples = 0;
+    // Mean-center each side's sampled window before comparing. A phone's
+    // auto-exposure often shifts brightness during a pan (bright sky vs.
+    // dark trees) — comparing raw pixel values makes genuinely overlapping
+    // content look different and get misjudged as "no match," which then
+    // falls back to an unblended, hard-cut paste. Comparing each side
+    // relative to its own local average catches the real match regardless
+    // of brightness offset.
+    let sumPrev = 0, sumNext = 0, samples = 0;
     for (let y = 0; y < bandH; y += 4) {
       for (let x = 0; x < overlap; x += 8) {
         const px = w - overlap + x;
         if (px < 0 || x >= w) continue;
-        diff += Math.abs(gray(prevData, px, y) - gray(nextData, x, y));
+        sumPrev += gray(prevData, px, y);
+        sumNext += gray(nextData, x, y);
         samples++;
       }
     }
     if (!samples) continue;
+    const meanPrev = sumPrev / samples, meanNext = sumNext / samples;
+
+    let diff = 0;
+    for (let y = 0; y < bandH; y += 4) {
+      for (let x = 0; x < overlap; x += 8) {
+        const px = w - overlap + x;
+        if (px < 0 || x >= w) continue;
+        diff += Math.abs((gray(prevData, px, y) - meanPrev) - (gray(nextData, x, y) - meanNext));
+      }
+    }
     const score = diff / samples;
     if (score < bestScore) { bestScore = score; bestOverlap = overlap; }
   }
@@ -753,7 +774,7 @@ FRAMING AND MARGIN:
 - Snippets may overlap at their edges when combining nearby elements into one richer composition — but do not return two snippets that are substantially the same shot with slightly different boundaries. If two candidate crops would show mostly the same content, pick the stronger one and use the other snippet slot on a genuinely different part of the scene instead.`;
 
   const varietyRules = `Vary the SHAPE, SCALE, and LOCATION of the snippets — don't default to similar-looking boxes in the same part of the frame:
-- Shape: pick aspect ratios deliberately based on the subject, not a fixed default. Consider square (1:1), landscape (4:3 or 3:2), wide landscape (16:9), and portrait/vertical (4:5 or 9:16) — whichever ratio actually suits each specific subject. Do not make all snippets the same shape as each other.
+- Shape: pick aspect ratios deliberately based on the subject, not a fixed default. Consider square (1:1), landscape (4:3 or 3:2), wide landscape (16:9 or wider), and portrait/vertical (4:5 or 9:16) — whichever ratio actually suits each specific subject. Do not make all snippets the same shape as each other, and do not let every snippet cluster near the same near-square/4:5 default — that is a common failure mode to actively avoid. When returning 2 or more snippets and the scene offers any wide vista (a horizon, a tree line, a run of rooflines, a wide gap between foreground elements), at least one snippet MUST be a genuine wide landscape crop — width at least 1.7x its height — rather than defaulting to a narrower or more square crop.
 - Scale: include real variety in how tightly you crop. At least one snippet should be a true zoomed-in detail — a small fraction of the source width AND height, isolating one specific subject or texture closely. Don't let every snippet span the full height of the source.
 - Location: the source is a wide scene — actively survey its FULL width, left, center, and right, rather than settling on whichever single region looks richest and drawing every snippet from near it. If the scene offers a compelling subject on the far left and another on the far right, don't ignore one of them in favor of two similar crops of the other. Each snippet should come from a meaningfully different horizontal position in the source unless there's a specific compositional reason (like spanning a seam) to overlap.`;
 
