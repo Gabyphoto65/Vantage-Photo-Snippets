@@ -28,17 +28,39 @@ export default async (request, context) => {
 
   try {
     const body = await request.text();
-    const upstream = await fetch(
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': apiKey
-        },
-        body
+
+    // Netlify kills this whole function at 40s with a generic, uninformative
+    // message. Timing out a few seconds earlier, on our own terms, means a
+    // slow/overloaded Gemini shows up as a clear, fast error instead of a
+    // silent multi-second hang that ends in "the edge function timed out."
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 32000);
+
+    let upstream;
+    try {
+      upstream = await fetch(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-goog-api-key': apiKey
+          },
+          body,
+          signal: controller.signal
+        }
+      );
+    } catch (fetchErr) {
+      if (fetchErr && fetchErr.name === 'AbortError') {
+        return new Response(
+          JSON.stringify({ error: 'Gemini did not respond within 32 seconds. This usually means Google\'s API is under heavy load right now (common on shared free-tier keys with several people testing at once) — wait a bit and try again.' }),
+          { status: 504, headers: { 'Content-Type': 'application/json' } }
+        );
       }
-    );
+      throw fetchErr;
+    } finally {
+      clearTimeout(timeoutId);
+    }
 
     if (!upstream.ok) {
       const errText = await upstream.text().catch(() => '');
