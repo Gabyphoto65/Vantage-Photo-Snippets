@@ -245,12 +245,10 @@
 
   <div class="filmstrip" id="filmstrip"></div>
 
-  <input type="file" id="photo-input" accept="image/*" capture="environment">
   <input type="file" id="record-input" accept="video/*" capture="environment">
   <input type="file" id="library-input" accept="image/*,video/*">
 
   <div class="controls-row">
-    <button id="btn-photo">Take photo</button>
     <button id="btn-record">Video pano</button>
   </div>
   <div class="controls">
@@ -277,10 +275,8 @@
 </main>
 
 <script>
-const photoInput = document.getElementById('photo-input');
 const recordInput = document.getElementById('record-input');
 const libraryInput = document.getElementById('library-input');
-const btnPhoto = document.getElementById('btn-photo');
 const btnRecord = document.getElementById('btn-record');
 const btnLibrary = document.getElementById('btn-library');
 const btnAnalyze = document.getElementById('btn-analyze');
@@ -298,6 +294,7 @@ const resultsList = document.getElementById('results-list');
 let mode = null; // 'image' | 'video'
 let sourceType = 'photo'; // 'photo' | 'video' — for feedback labeling only
 let currentImage = null;      // single Image, image mode
+let lastBoxes = null;         // most recent snippet boxes, so resize redraws don't lose them
 let currentBase64 = null;
 let currentMime = 'image/jpeg';
 let frames = [];              // video mode: [{img, canvas, base64, mime}]
@@ -306,11 +303,9 @@ function updateAnalyzeState() {
   btnAnalyze.disabled = !currentImage;
 }
 
-btnPhoto.addEventListener('click', () => photoInput.click());
 btnRecord.addEventListener('click', () => recordInput.click());
 btnLibrary.addEventListener('click', () => libraryInput.click());
 
-photoInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 recordInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 libraryInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 
@@ -320,6 +315,7 @@ function resetOutputs() {
   resultsList.innerHTML = '';
   filmstrip.innerHTML = '';
   filmstrip.classList.remove('show');
+  lastBoxes = null;
 }
 
 // Builds a size-capped JPEG from the full-resolution image, specifically
@@ -470,6 +466,25 @@ function estimateOverlap(prevCanvas, nextCanvas) {
   return { overlap: bestOverlap, score: bestScore };
 }
 
+function drawFeathered(destCtx, img, sx, sWidth, dx, height, featherW) {
+  // Draws a horizontal band of `img` with its opacity ramping from 0 to 1
+  // across the first `featherW` px, so it blends into whatever's already
+  // drawn underneath instead of producing a hard visible seam line.
+  const off = document.createElement('canvas');
+  off.width = sWidth; off.height = height;
+  const octx = off.getContext('2d');
+  octx.drawImage(img, sx, 0, sWidth, height, 0, 0, sWidth, height);
+  const stop = Math.min(1, featherW / sWidth);
+  const grad = octx.createLinearGradient(0, 0, sWidth, 0);
+  grad.addColorStop(0, 'rgba(0,0,0,0)');
+  grad.addColorStop(stop, 'rgba(0,0,0,1)');
+  grad.addColorStop(1, 'rgba(0,0,0,1)');
+  octx.globalCompositeOperation = 'destination-in';
+  octx.fillStyle = grad;
+  octx.fillRect(0, 0, sWidth, height);
+  destCtx.drawImage(off, dx, 0);
+}
+
 function buildComposite(frameList) {
   const canvases = frameList.map(frameToCanvas);
   if (canvases.length === 1) {
@@ -480,26 +495,34 @@ function buildComposite(frameList) {
   const fw = canvases[0].width, fh = canvases[0].height;
   // A pan sampled evenly by time (not by how far the camera actually moved)
   // usually has real overlap between consecutive frames. Trim each frame
-  // down to roughly its new content before pasting, instead of assuming
-  // every frame is a distinct, non-overlapping tile.
-  const segments = [{ canvas: canvases[0], sx: 0, width: fw }];
+  // down to roughly its new content, and feather a small band across each
+  // trim point, instead of assuming every frame is a distinct tile pasted
+  // with a hard edge — snippets are allowed to span a seam, so the seam
+  // itself needs to look like part of one scene, not a splice.
+  const segments = [{ canvas: canvases[0], sx: 0, width: fw, feather: 0 }];
   for (let i = 1; i < canvases.length; i++) {
     const { overlap, score } = estimateOverlap(canvases[i - 1], canvases[i]);
     const confidentMatch = score < 28; // low score = strong pixel-level agreement
-    const width = confidentMatch ? Math.max(fw - overlap, Math.round(fw * 0.15)) : fw;
-    const sx = confidentMatch ? overlap : 0;
-    segments.push({ canvas: canvases[i], sx, width });
+    const trimmedSx = confidentMatch ? overlap : 0;
+    const width = confidentMatch ? Math.max(fw - trimmedSx, Math.round(fw * 0.15)) : fw;
+    const feather = confidentMatch ? Math.min(28, trimmedSx, Math.round(fw * 0.05)) : 0;
+    segments.push({ canvas: canvases[i], sx: Math.max(0, trimmedSx - feather), width: width + feather, feather });
   }
 
-  const totalWidth = segments.reduce((sum, s) => sum + s.width, 0);
+  const totalWidth = fw + segments.slice(1).reduce((sum, s) => sum + (s.width - s.feather), 0);
   const combinedCanvas = document.createElement('canvas');
   combinedCanvas.width = totalWidth;
   combinedCanvas.height = fh;
   const cctx = combinedCanvas.getContext('2d');
   let cursorX = 0;
-  segments.forEach(seg => {
-    cctx.drawImage(seg.canvas, seg.sx, 0, seg.width, fh, cursorX, 0, seg.width, fh);
-    cursorX += seg.width;
+  segments.forEach((seg, i) => {
+    if (i === 0 || seg.feather === 0) {
+      cctx.drawImage(seg.canvas, seg.sx, 0, seg.width, fh, cursorX, 0, seg.width, fh);
+      cursorX += seg.width;
+    } else {
+      drawFeathered(cctx, seg.canvas, seg.sx, seg.width, cursorX - seg.feather, fh, seg.feather);
+      cursorX += seg.width - seg.feather;
+    }
   });
   const dataUrl = combinedCanvas.toDataURL('image/jpeg', 0.85);
   return { dataUrl, base64: dataUrl.split(',')[1] };
@@ -683,7 +706,7 @@ function drawBrackets(targetCtx, w, h, boxes) {
   });
 }
 
-window.addEventListener('resize', () => { if (mode === 'image' && currentImage) drawStage(); });
+window.addEventListener('resize', () => { if (mode === 'image' && currentImage) drawStage(lastBoxes); });
 
 btnAnalyze.addEventListener('click', async () => {
   const hasMedia = mode === 'image' && currentImage;
@@ -835,6 +858,7 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
       if (typeof snippet.x !== 'number' || typeof snippet.y !== 'number') return;
       snippetCount++;
       liveSnippets.push(snippet);
+      lastBoxes = liveSnippets;
       drawStage(liveSnippets);
       renderOneSnippet(snippet, snippetCount - 1);
     }
