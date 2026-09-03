@@ -245,10 +245,12 @@
 
   <div class="filmstrip" id="filmstrip"></div>
 
+  <input type="file" id="photo-input" accept="image/*" capture="environment">
   <input type="file" id="record-input" accept="video/*" capture="environment">
   <input type="file" id="library-input" accept="image/*,video/*">
 
   <div class="controls-row">
+    <button id="btn-photo">Take photo</button>
     <button id="btn-record">Video pano</button>
   </div>
   <div class="controls">
@@ -275,8 +277,10 @@
 </main>
 
 <script>
+const photoInput = document.getElementById('photo-input');
 const recordInput = document.getElementById('record-input');
 const libraryInput = document.getElementById('library-input');
+const btnPhoto = document.getElementById('btn-photo');
 const btnRecord = document.getElementById('btn-record');
 const btnLibrary = document.getElementById('btn-library');
 const btnAnalyze = document.getElementById('btn-analyze');
@@ -294,7 +298,6 @@ const resultsList = document.getElementById('results-list');
 let mode = null; // 'image' | 'video'
 let sourceType = 'photo'; // 'photo' | 'video' — for feedback labeling only
 let currentImage = null;      // single Image, image mode
-let lastBoxes = null;         // most recent snippet boxes, so resize redraws don't lose them
 let currentBase64 = null;
 let currentMime = 'image/jpeg';
 let frames = [];              // video mode: [{img, canvas, base64, mime}]
@@ -303,9 +306,11 @@ function updateAnalyzeState() {
   btnAnalyze.disabled = !currentImage;
 }
 
+btnPhoto.addEventListener('click', () => photoInput.click());
 btnRecord.addEventListener('click', () => recordInput.click());
 btnLibrary.addEventListener('click', () => libraryInput.click());
 
+photoInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 recordInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 libraryInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
 
@@ -315,7 +320,6 @@ function resetOutputs() {
   resultsList.innerHTML = '';
   filmstrip.innerHTML = '';
   filmstrip.classList.remove('show');
-  lastBoxes = null;
 }
 
 // Builds a size-capped JPEG from the full-resolution image, specifically
@@ -337,10 +341,7 @@ function toUploadBase64(img, maxDim, quality) {
 
 function useAsImage(img, base64, mimeType) {
   currentImage = img;
-  // Kept deliberately smaller than the on-device display copy: Netlify Edge
-  // Functions must respond within 40s, and a large panorama at 1600px was
-  // pushing Gemini's response time close enough to that ceiling to time out.
-  const upload = toUploadBase64(img, 1200, 0.8);
+  const upload = toUploadBase64(img, 1600, 0.82);
   currentBase64 = upload.base64;
   currentMime = upload.mime;
   mode = 'image';
@@ -452,58 +453,21 @@ function estimateOverlap(prevCanvas, nextCanvas) {
   const maxOverlap = Math.floor(w * 0.85);
 
   for (let overlap = minOverlap; overlap <= maxOverlap; overlap += 4) {
-    // Mean-center each side's sampled window before comparing. A phone's
-    // auto-exposure often shifts brightness during a pan (bright sky vs.
-    // dark trees) — comparing raw pixel values makes genuinely overlapping
-    // content look different and get misjudged as "no match," which then
-    // falls back to an unblended, hard-cut paste. Comparing each side
-    // relative to its own local average catches the real match regardless
-    // of brightness offset.
-    let sumPrev = 0, sumNext = 0, samples = 0;
+    let diff = 0, samples = 0;
     for (let y = 0; y < bandH; y += 4) {
       for (let x = 0; x < overlap; x += 8) {
         const px = w - overlap + x;
         if (px < 0 || x >= w) continue;
-        sumPrev += gray(prevData, px, y);
-        sumNext += gray(nextData, x, y);
+        diff += Math.abs(gray(prevData, px, y) - gray(nextData, x, y));
         samples++;
       }
     }
     if (!samples) continue;
-    const meanPrev = sumPrev / samples, meanNext = sumNext / samples;
-
-    let diff = 0;
-    for (let y = 0; y < bandH; y += 4) {
-      for (let x = 0; x < overlap; x += 8) {
-        const px = w - overlap + x;
-        if (px < 0 || x >= w) continue;
-        diff += Math.abs((gray(prevData, px, y) - meanPrev) - (gray(nextData, x, y) - meanNext));
-      }
-    }
     const score = diff / samples;
     if (score < bestScore) { bestScore = score; bestOverlap = overlap; }
   }
 
   return { overlap: bestOverlap, score: bestScore };
-}
-
-function drawFeathered(destCtx, img, sx, sWidth, dx, height, featherW) {
-  // Draws a horizontal band of `img` with its opacity ramping from 0 to 1
-  // across the first `featherW` px, so it blends into whatever's already
-  // drawn underneath instead of producing a hard visible seam line.
-  const off = document.createElement('canvas');
-  off.width = sWidth; off.height = height;
-  const octx = off.getContext('2d');
-  octx.drawImage(img, sx, 0, sWidth, height, 0, 0, sWidth, height);
-  const stop = Math.min(1, featherW / sWidth);
-  const grad = octx.createLinearGradient(0, 0, sWidth, 0);
-  grad.addColorStop(0, 'rgba(0,0,0,0)');
-  grad.addColorStop(stop, 'rgba(0,0,0,1)');
-  grad.addColorStop(1, 'rgba(0,0,0,1)');
-  octx.globalCompositeOperation = 'destination-in';
-  octx.fillStyle = grad;
-  octx.fillRect(0, 0, sWidth, height);
-  destCtx.drawImage(off, dx, 0);
 }
 
 function buildComposite(frameList) {
@@ -516,34 +480,26 @@ function buildComposite(frameList) {
   const fw = canvases[0].width, fh = canvases[0].height;
   // A pan sampled evenly by time (not by how far the camera actually moved)
   // usually has real overlap between consecutive frames. Trim each frame
-  // down to roughly its new content, and feather a small band across each
-  // trim point, instead of assuming every frame is a distinct tile pasted
-  // with a hard edge — snippets are allowed to span a seam, so the seam
-  // itself needs to look like part of one scene, not a splice.
-  const segments = [{ canvas: canvases[0], sx: 0, width: fw, feather: 0 }];
+  // down to roughly its new content before pasting, instead of assuming
+  // every frame is a distinct, non-overlapping tile.
+  const segments = [{ canvas: canvases[0], sx: 0, width: fw }];
   for (let i = 1; i < canvases.length; i++) {
     const { overlap, score } = estimateOverlap(canvases[i - 1], canvases[i]);
     const confidentMatch = score < 28; // low score = strong pixel-level agreement
-    const trimmedSx = confidentMatch ? overlap : 0;
-    const width = confidentMatch ? Math.max(fw - trimmedSx, Math.round(fw * 0.15)) : fw;
-    const feather = confidentMatch ? Math.min(28, trimmedSx, Math.round(fw * 0.05)) : 0;
-    segments.push({ canvas: canvases[i], sx: Math.max(0, trimmedSx - feather), width: width + feather, feather });
+    const width = confidentMatch ? Math.max(fw - overlap, Math.round(fw * 0.15)) : fw;
+    const sx = confidentMatch ? overlap : 0;
+    segments.push({ canvas: canvases[i], sx, width });
   }
 
-  const totalWidth = fw + segments.slice(1).reduce((sum, s) => sum + (s.width - s.feather), 0);
+  const totalWidth = segments.reduce((sum, s) => sum + s.width, 0);
   const combinedCanvas = document.createElement('canvas');
   combinedCanvas.width = totalWidth;
   combinedCanvas.height = fh;
   const cctx = combinedCanvas.getContext('2d');
   let cursorX = 0;
-  segments.forEach((seg, i) => {
-    if (i === 0 || seg.feather === 0) {
-      cctx.drawImage(seg.canvas, seg.sx, 0, seg.width, fh, cursorX, 0, seg.width, fh);
-      cursorX += seg.width;
-    } else {
-      drawFeathered(cctx, seg.canvas, seg.sx, seg.width, cursorX - seg.feather, fh, seg.feather);
-      cursorX += seg.width - seg.feather;
-    }
+  segments.forEach(seg => {
+    cctx.drawImage(seg.canvas, seg.sx, 0, seg.width, fh, cursorX, 0, seg.width, fh);
+    cursorX += seg.width;
   });
   const dataUrl = combinedCanvas.toDataURL('image/jpeg', 0.85);
   return { dataUrl, base64: dataUrl.split(',')[1] };
@@ -727,7 +683,7 @@ function drawBrackets(targetCtx, w, h, boxes) {
   });
 }
 
-window.addEventListener('resize', () => { if (mode === 'image' && currentImage) drawStage(lastBoxes); });
+window.addEventListener('resize', () => { if (mode === 'image' && currentImage) drawStage(); });
 
 btnAnalyze.addEventListener('click', async () => {
   const hasMedia = mode === 'image' && currentImage;
@@ -774,7 +730,7 @@ FRAMING AND MARGIN:
 - Snippets may overlap at their edges when combining nearby elements into one richer composition — but do not return two snippets that are substantially the same shot with slightly different boundaries. If two candidate crops would show mostly the same content, pick the stronger one and use the other snippet slot on a genuinely different part of the scene instead.`;
 
   const varietyRules = `Vary the SHAPE, SCALE, and LOCATION of the snippets — don't default to similar-looking boxes in the same part of the frame:
-- Shape: pick aspect ratios deliberately based on the subject, not a fixed default. Consider square (1:1), landscape (4:3 or 3:2), wide landscape (16:9 or wider), and portrait/vertical (4:5 or 9:16) — whichever ratio actually suits each specific subject. Do not make all snippets the same shape as each other, and do not let every snippet cluster near the same near-square/4:5 default — that is a common failure mode to actively avoid. When returning 2 or more snippets and the scene offers any wide vista (a horizon, a tree line, a run of rooflines, a wide gap between foreground elements), at least one snippet MUST be a genuine wide landscape crop — width at least 1.7x its height — rather than defaulting to a narrower or more square crop.
+- Shape: pick aspect ratios deliberately based on the subject, not a fixed default. Consider square (1:1), landscape (4:3 or 3:2), wide landscape (16:9), and portrait/vertical (4:5 or 9:16) — whichever ratio actually suits each specific subject. Do not make all snippets the same shape as each other.
 - Scale: include real variety in how tightly you crop. At least one snippet should be a true zoomed-in detail — a small fraction of the source width AND height, isolating one specific subject or texture closely. Don't let every snippet span the full height of the source.
 - Location: the source is a wide scene — actively survey its FULL width, left, center, and right, rather than settling on whichever single region looks richest and drawing every snippet from near it. If the scene offers a compelling subject on the far left and another on the far right, don't ignore one of them in favor of two similar crops of the other. Each snippet should come from a meaningfully different horizontal position in the source unless there's a specific compositional reason (like spanning a seam) to overlap.`;
 
@@ -812,13 +768,32 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
   }
 
   try {
-    // No automatic retries: the free-tier Gemini quota is only 5 requests
-    // per minute, and a single tap silently retrying 2-3 times could burn
-    // most of that budget by itself — worst possible moment to do that,
-    // since it's retrying because Gemini is already under load. One clean
-    // attempt, one clear message on failure, and the user decides whether
-    // to tap again.
-    const response = await callGemini();
+    let response;
+    try {
+      response = await callGemini();
+    } catch (networkErr) {
+      // One silent retry for a dropped connection or timeout before surfacing an error
+      statusText.textContent = 'Connection hiccup — retrying…';
+      response = await callGemini();
+    }
+
+    if (response.status === 503) {
+      // 503s are transient overload — worth a couple of spaced-out retries
+      // before making the user tap the button again themselves.
+      for (let attempt = 0; attempt < 2 && response.status === 503; attempt++) {
+        const waitSec = 5 * (attempt + 1);
+        for (let s = waitSec; s > 0; s--) {
+          statusText.textContent = 'Google is busy — retrying in ' + s + 's…';
+          await new Promise(r => setTimeout(r, 1000));
+        }
+        statusText.textContent = 'Retrying…';
+        try {
+          response = await callGemini();
+        } catch (e) {
+          break;
+        }
+      }
+    }
 
     if (!response.ok) {
       const errBody = await response.text().catch(() => '');
@@ -860,7 +835,6 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
       if (typeof snippet.x !== 'number' || typeof snippet.y !== 'number') return;
       snippetCount++;
       liveSnippets.push(snippet);
-      lastBoxes = liveSnippets;
       drawStage(liveSnippets);
       renderOneSnippet(snippet, snippetCount - 1);
     }
@@ -888,21 +862,7 @@ x, y, width, height are fractions of the full image (0 to 1), where x,y is the t
     clearInterval(tickInterval);
     clearTimeout(streamTimeoutId);
     statusEl.classList.remove('show');
-    // A brief cooldown after every attempt (success or failure) — mainly to
-    // stop an impatient double-tap from using up more of the 5/minute quota
-    // than a single real analysis needs.
-    let cooldown = 8;
-    btnAnalyze.textContent = 'Wait ' + cooldown + 's…';
-    const cooldownInterval = setInterval(() => {
-      cooldown--;
-      if (cooldown <= 0) {
-        clearInterval(cooldownInterval);
-        btnAnalyze.textContent = 'Analyze scene';
-        btnAnalyze.disabled = !currentImage;
-      } else {
-        btnAnalyze.textContent = 'Wait ' + cooldown + 's…';
-      }
-    }, 1000);
+    btnAnalyze.disabled = false;
   }
 });
 
